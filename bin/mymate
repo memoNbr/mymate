@@ -18,6 +18,11 @@ Observe:
   status [--json]                 Crew board: workspaces + agents and their states
   read <target> [--lines N]       Read an agent's recent output (read-only)
 
+Open:
+  open [name] [--kind KIND]       Pop a focused mymate conductor pane you can
+                                  talk to (like firstmate's open-in-herdr).
+                                  Reuses the pane if the conductor already exists
+
 Lead:
   dispatch <name> <kind> "<brief>" [--skill FILE] [-- agent-args...]
                                   Open a sibling pane, start a <kind> worker
@@ -38,6 +43,37 @@ Skills:
   help | --help | -h              This message
   --version                       Version
 EOF
+}
+
+# --- open -----------------------------------------------------------------
+
+cmd_open() {
+  mm_require_herdr
+  mm_require_inside_herdr
+  local name="mymate" kind="opencode"
+  [ "${1:-}" = "--kind" ] && { name="mymate"; kind="${2:-opencode}"; shift 2 2>/dev/null; }
+  [ -n "${1:-}" ] && name="$1"
+
+  if mm_agent_names | grep -qxF "$name"; then
+    echo "conductor '$name' already open; focusing it."
+    mm_agent_focus "$name" >/dev/null
+    return 0
+  fi
+
+  echo "opening conductor '$name' in a focused pane (kind: $kind, cwd: $MM_ROOT)..."
+  local pane_id
+  pane_id="$(mm_split_focused "$MM_ROOT")"
+  echo "  pane: $pane_id"
+
+  mm_agent_start "$name" --kind "$kind" --pane "$pane_id" || die "worker start failed (is kind '$kind' available?)"
+
+  local text contract
+  contract="$(cat "$MM_ROOT/mymate.skill.md")"
+  text="$(printf '%s\n\n---\n\n%s\n' "You are now the mymate conductor. Read your contract, introduce yourself to the captain in one short paragraph, then wait for the captain's first command." "$contract")"
+  mm_agent_prompt "$name" "$text" --timeout 60000 >/dev/null 2>&1 || true
+
+  echo "conductor ready: $name @ $pane_id"
+  echo "you are in its pane now. later: mymate talk $name \"...\" from any herdr pane"
 }
 
 # --- observe ---------------------------------------------------------------
@@ -202,6 +238,7 @@ cmd="${1:-}"
 case "$cmd" in
   status) shift; cmd_status "$@" ;;
   read)   shift; cmd_read "$@" ;;
+  open)   shift; cmd_open "$@" ;;
   dispatch) shift; cmd_dispatch "$@" ;;
   talk)   shift; cmd_talk "$@" ;;
   key)    shift; cmd_key "$@" ;;

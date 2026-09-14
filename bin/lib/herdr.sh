@@ -76,5 +76,26 @@ mm_split_sibling() {
   printf '%s\n' "$pane_id"
 }
 
+# mm_split_focused : like mm_split_sibling but takes focus (the `open` command,
+# so the captain is dropped straight into the conductor pane).
+mm_split_focused() {
+  mm_require_inside_herdr
+  local out
+  out="$(herdr pane split --current --direction right --cwd "${1:-$PWD}" --focus 2>/tmp/mymate-split.err)" \
+    || { cat /tmp/mymate-split.err >&2; return 1; }
+  local pane_id
+  pane_id="$(printf '%s\n' "$out" | mm_jq '.result.pane.pane_id // empty')"
+  [ -n "$pane_id" ] || die "could not read new pane id from: $out"
+  printf '%s\n' "$pane_id"
+}
+
 # mm_agent_start <name> <kind> <pane_id> [-- agent-args...]
 mm_agent_start() { herdr agent start "$@"; }
+
+# mm_agent_focus <target> : bring an agent's pane forward.
+mm_agent_focus() { herdr agent focus "$@"; }
+
+# mm_agent_names : plain list of current agent names, one per line.
+mm_agent_names() {
+  mm_agents_json | mm_jq '.result.agents[].agent'
+}

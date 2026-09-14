@@ -10,6 +10,9 @@ agent. Everything else is plain shell over the herdr CLI.
 
 ## What you get
 
+- `mymate open [name] [--kind KIND]` — like firstmate's open-in-herdr: pop a
+  focused mymate conductor pane you can talk to directly, preloaded with the
+  conductor contract. Reuses the pane if the conductor is already open.
 - `mymate status` — observe the whole crew: every herdr workspace and every
   agent, with live state (`idle`, `working`, `blocked`, `done`, `unknown`).
 - `mymate dispatch <name> <kind> "<brief>" [--skill FILE]` — open a sibling
