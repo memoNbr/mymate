@@ -1,0 +1,213 @@
+#!/usr/bin/env bash
+# mymate - a tiny conductor for agents running in herdr panes.
+# See README.md and mymate.skill.md. One bash file; read it end to end.
+set -euo pipefail
+
+MM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$MM_ROOT/bin/lib/herdr.sh"
+
+VERSION="0.1.0"
+
+usage() {
+  cat <<'EOF'
+mymate - observe and lead a crew of agents in herdr panes
+
+Usage: mymate <command> [args]
+
+Observe:
+  status [--json]                 Crew board: workspaces + agents and their states
+  read <target> [--lines N]       Read an agent's recent output (read-only)
+
+Lead:
+  dispatch <name> <kind> "<brief>" [--skill FILE] [-- agent-args...]
+                                  Open a sibling pane, start a <kind> worker
+                                  named <name>, hand it the skill + brief
+  talk <target> "<text>"          Steer an agent (blocking: waits to settle)
+  key <target> <key> [...]        Send keys (esc, ctrl+c, ...)
+
+Watch:
+  watch [--until STATE...] [--timeout MS] [--interval S]
+                                  Print state changes until states are reached
+
+Skills:
+  skills list                     List local skills under skills/
+  skills fetch                    Refresh skills/herdr.skill.md from installed herdr
+  skills add <url>                Download any skill.md to base workers on
+  skills new <name>               Scaffold a starter worker skill
+
+  help | --help | -h              This message
+  --version                       Version
+EOF
+}
+
+# --- observe ---------------------------------------------------------------
+
+cmd_status() {
+  mm_require_herdr
+  local json_agents json_ws
+  json_agents="$(mm_agents_json)"
+  json_ws="$(mm_workspaces_json)"
+
+  if [ "${1:-}" = "--json" ]; then
+    printf '%s\n%s\n' "$json_ws" "$json_agents"
+    return 0
+  fi
+
+  echo "=== workspaces ==="
+  printf '%s\n' "$json_ws" | mm_jq '.result.workspaces[] | "\(.workspace_id)  \(.label)  tabs=\(.tab_count) panes=\(.pane_count)  agent=\(.agent_status)"'
+
+  echo
+  echo "=== agents ==="
+  printf '%s\n' "$json_agents" | mm_jq '.result.agents[] | "\(.agent)  \(.agent_status)  \(.cwd)  \(if .focused then "(focused)" else "" end)  pane=\(.pane_id)  tab=\(.tab_id)"'
+}
+
+cmd_read() {
+  mm_require_herdr
+  [ $# -ge 1 ] || { echo "usage: mymate read <target> [--lines N]"; return 1; }
+  mm_agent_read "$@" 2>&1
+}
+
+# --- lead ------------------------------------------------------------------
+
+cmd_dispatch() {
+  mm_require_herdr
+  mm_require_inside_herdr
+  local name kind brief skill=""
+  name="${1:-}"; kind="${2:-}"; brief="${3:-}"
+  [ -n "$name" ] && [ -n "$kind" ] && [ -n "$brief" ] || {
+    echo "usage: mymate dispatch <name> <kind> \"<brief>\" [--skill FILE] [-- agent-args...]"; return 1; }
+  shift 3
+
+  case "${1:-}" in
+    --skill) skill="${2:-}"; shift 2 ;;
+  esac
+
+  [ -z "$skill" ] || [ -f "$skill" ] || die "skill file not found: $skill"
+
+  echo "opening a sibling pane..."
+  local pane_id
+  pane_id="$(mm_split_sibling)"
+  echo "  pane: $pane_id"
+
+  echo "starting worker '$name' (kind: $kind)..."
+  mm_agent_start "$name" --kind "$kind" --pane "$pane_id" "$@"
+  echo "  ready: $name @ $pane_id"
+
+  local prompt_text="$brief"
+  if [ -n "$skill" ]; then
+    prompt_text="$(printf '%s\n\n---\n\n%s\n\n---\n%s\n' 'Read this skill first.' "$(cat "$skill")" "$brief")"
+  fi
+  echo "handing over the brief..."
+  mm_agent_prompt "$name" "$prompt_text" --wait --timeout 300000 >/dev/null
+  echo "dispatch complete: $name"
+  echo "next: mymate status | mymate talk $name \"...\""
+}
+
+cmd_talk() {
+  mm_require_herdr
+  mm_require_inside_herdr
+  local target="${1:-}" text="${2:-}"
+  [ -n "$target" ] && [ -n "$text" ] || { echo "usage: mymate talk <target> \"<text>\""; return 1; }
+  # Steer and wait for the settled state; report what changed.
+  mm_agent_prompt "$target" "$text" --wait --timeout 600000 >/dev/null
+  mm_agent_get "$target" | mm_jq '. | "\(.agent) is \(.agent_status)"'
+}
+
+cmd_key() {
+  mm_require_herdr
+  mm_require_inside_herdr
+  local target="${1:-}"
+  [ -n "$target" ] && shift || { echo "usage: mymate key <target> <key> [...]"; return 1; }
+  mm_agent_keys "$target" "$@" >/dev/null
+  mm_agent_get "$target" | mm_jq '. | "\(.agent) is \(.agent_status)"'
+}
+
+# --- watch -----------------------------------------------------------------
+
+cmd_watch() {
+  mm_require_herdr
+  local until_states="" timeout_ms=600000 interval=2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --until) until_states="${2:-}"; shift 2 ;;
+      --timeout) timeout_ms="${2:-}"; shift 2 ;;
+      --interval) interval="${2:-}"; shift 2 ;;
+      *) echo "usage: mymate watch [--until idle,blocked,done] [--timeout MS] [--interval S]"; return 1 ;;
+    esac
+  done
+
+  local deadline=$(( $(date +%s) + timeout_ms / 1000 ))
+  local prev="" cur
+  local -A seen_states=()
+  echo "watching (interval ${interval}s)..."
+  while :; do
+    cur="$(mm_agents_json | mm_jq '.result.agents[] | "\(.agent)|\(.agent_status)|\(.cwd)"')"
+    if [ "$cur" != "$prev" ]; then
+      printf '%s :: %s\n' "$(date +%H:%M:%S)" "$cur"
+      prev="$cur"
+    fi
+    if [ -n "$until_states" ]; then
+      # settle when every requested state currently has at least one occupant
+      local s all=1
+      for s in $until_states; do
+        printf '%s\n' "$cur" | grep -q "|${s}|" || { all=0; break; }
+      done
+      [ "$all" = 1 ] && { echo "reached: $until_states"; return 0; }
+    fi
+    [ "$(date +%s)" -lt "$deadline" ] || { echo "timeout (${timeout_ms}ms)"; return 1; }
+    sleep "$interval"
+  done
+}
+
+# --- skills ----------------------------------------------------------------
+
+cmd_skills() {
+  local sub="${1:-}"
+  case "$sub" in
+    list)
+      [ -d "$MM_ROOT/skills" ] && for f in "$MM_ROOT"/skills/*.skill.md; do [ -f "$f" ] && echo "  $(basename "$f")"; done
+      ;;
+    fetch)
+      mm_require_herdr
+      local out="$MM_ROOT/skills/herdr.skill.md"
+      herdr --skill > "$out"
+      echo "refreshed $out ($(wc -c < "$out") bytes)"
+      ;;
+    add)
+      local url="${2:-}"
+      [ -n "$url" ] || die "usage: mymate skills add <url>"
+      local name
+      name="$(basename "$url")"
+      mkdir -p "$MM_ROOT/skills"
+      curl -fsSL "$url" -o "$MM_ROOT/skills/$name"
+      echo "downloaded skills/$name"
+      ;;
+    new)
+      local name="${2:-}"
+      [ -n "$name" ] || die "usage: mymate skills new <name>"
+      mkdir -p "$MM_ROOT/skills"
+      local f="$MM_ROOT/skills/$name.skill.md"
+      [ -e "$f" ] && die "already exists: $f"
+      sed "s/^name: starter/name: $name/" "$MM_ROOT/skills/starter.skill.md" > "$f"
+      echo "scaffolded $f - edit the brief line, then dispatch with --skill $f"
+      ;;
+    *)
+      echo "usage: mymate skills list|fetch|add <url>|new <name>"; return 1 ;;
+  esac
+}
+
+# --- main ------------------------------------------------------------------
+
+cmd="${1:-}"
+case "$cmd" in
+  status) shift; cmd_status "$@" ;;
+  read)   shift; cmd_read "$@" ;;
+  dispatch) shift; cmd_dispatch "$@" ;;
+  talk)   shift; cmd_talk "$@" ;;
+  key)    shift; cmd_key "$@" ;;
+  watch)  shift; cmd_watch "$@" ;;
+  skills) shift; cmd_skills "$@" ;;
+  help|--help|-h) usage ;;
+  --version) echo "mymate $VERSION" ;;
+  *) usage; exit 1 ;;
+esac
