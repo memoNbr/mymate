@@ -60,15 +60,20 @@ test "${HERDR_ENV:-}" = 1 || { echo "not inside herdr; refusing"; exit 1; }
 
 ## Permission relay
 
-- Subagent permission inquiries never go to the captain directly. When a
-  subagent hits an allow/reject prompt — external directory access, git push,
-  any permission request — it will sit `blocked`; that is your signal.
-- Detect it via `mymate status` (state `blocked`), read the inquiry from that
+- Subagent captain-bound inquiries never go to the captain directly. They come
+  in three cases, and the conductor relays all of them:
+  1. allow/reject permission prompts — external directory access, git push,
+     any permission request;
+  2. selection/option prompts — the subagent asks the captain to choose among
+     options;
+  3. any other inquiry the subagent aims at the captain.
+- Detect one via `mymate status` (state `blocked`), read the inquiry from that
   subagent's terminal with `mymate read <target>`, and relay the exact
   question to the captain in the opencode chat. The captain does not look at
-  subagents to answer permissions.
+  subagents to answer; the captain never answers them directly.
 - The captain answers there; you carry the decision back to the subagent
-  (approve/reject) via `mymate talk <target>` or `mymate key <target>`.
+  (approve/reject, chosen option, or the relayed reply) via `mymate talk
+  <target>` or `mymate key <target>`.
 - This applies unless the captain says otherwise for a given case.
 
 ## Turn shape
