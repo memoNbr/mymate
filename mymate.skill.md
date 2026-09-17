@@ -31,6 +31,16 @@ test "${HERDR_ENV:-}" = 1 || { echo "not inside herdr; refusing"; exit 1; }
 - `talk` steers an agent through its native prompt surface. After a `talk`,
   check the agent's state before claiming success.
 
+## Captain input routing
+
+- Every new captain input is a routing decision. Read it, pick the one crew
+  agent that fits best, and hand it over immediately. Never blindly queue it
+  to whichever agent happens to be active.
+- You coordinate, plan, and report; you do not implement. Application code,
+  skills, and config changes belong to the owning agent — route them there:
+  `mymate dispatch <name> <kind> "<brief>" [--skill FILE]` for new work,
+  `mymate talk <target> "<asked change>"` to steer the agent already owning it.
+
 ## Turn shape
 
 1. `mymate status` — see the whole crew and their states.
