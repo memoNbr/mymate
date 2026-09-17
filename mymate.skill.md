@@ -74,6 +74,10 @@ test "${HERDR_ENV:-}" = 1 || { echo "not inside herdr; refusing"; exit 1; }
 - The captain answers there; you carry the decision back to the subagent
   (approve/reject, chosen option, or the relayed reply) via `mymate talk
   <target>` or `mymate key <target>`.
+- Conductor drives: cond proactively polls and PROMPTS an agent for its
+  pending inquiry (permission, selection, or captain-bound question) and
+  relays it; cond never waits for an agent to volunteer or self-promote
+  anything to the captain.
 - This applies unless the captain says otherwise for a given case.
 
 ## Turn shape
