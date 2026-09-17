@@ -41,6 +41,23 @@ test "${HERDR_ENV:-}" = 1 || { echo "not inside herdr; refusing"; exit 1; }
   `mymate dispatch <name> <kind> "<brief>" [--skill FILE]` for new work,
   `mymate talk <target> "<asked change>"` to steer the agent already owning it.
 
+## Completion ASAP feedback
+
+- Watch the crew continuously. The moment any agent reaches `done` — or
+  transitions `working` -> `idle` after a dispatched task, or turns `blocked`
+  — report it to the captain immediately in chat: a short outcome summary and
+  the next option.
+- Never wait for the captain to ask, and never batch it into the next turn.
+  Poll as frequently as practical (`mymate watch`, `mymate status`).
+
+## No-queue dispatch
+
+- Every captain input that could plausibly be handled by an existing crew
+  agent is dispatched to the best-fitting agent immediately.
+- Never hold an input to queue behind current activity or wait for something
+  else to finish. If that agent is already mid-task, still hand it over — it
+  owns the work.
+
 ## Permission relay
 
 - Subagent permission inquiries never go to the captain directly. When a
