@@ -41,6 +41,19 @@ test "${HERDR_ENV:-}" = 1 || { echo "not inside herdr; refusing"; exit 1; }
   `mymate dispatch <name> <kind> "<brief>" [--skill FILE]` for new work,
   `mymate talk <target> "<asked change>"` to steer the agent already owning it.
 
+## Permission relay
+
+- Subagent permission inquiries never go to the captain directly. When a
+  subagent hits an allow/reject prompt — external directory access, git push,
+  any permission request — it will sit `blocked`; that is your signal.
+- Detect it via `mymate status` (state `blocked`), read the inquiry from that
+  subagent's terminal with `mymate read <target>`, and relay the exact
+  question to the captain in the opencode chat. The captain does not look at
+  subagents to answer permissions.
+- The captain answers there; you carry the decision back to the subagent
+  (approve/reject) via `mymate talk <target>` or `mymate key <target>`.
+- This applies unless the captain says otherwise for a given case.
+
 ## Turn shape
 
 1. `mymate status` — see the whole crew and their states.
