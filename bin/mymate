@@ -16,6 +16,7 @@ Usage: mymate <command> [args]
 
 Observe:
   status [--json]                 Crew board: workspaces + agents and their states
+  probe                           Fast color board: yellow=busy, red=blocked, green=ready (+ time-in-state)
   read <target> [--lines N]       Read an agent's recent output (read-only)
 
 Open:
@@ -91,10 +92,67 @@ cmd_status() {
 
   echo "=== workspaces ==="
   printf '%s\n' "$json_ws" | mm_jq '.result.workspaces[] | "\(.workspace_id)  \(.label)  tabs=\(.tab_count) panes=\(.pane_count)  agent=\(.agent_status)"'
+echo
 
-  echo
-  echo "=== agents ==="
-  printf '%s\n' "$json_agents" | mm_jq '.result.agents[] | "\(.agent)  \(.agent_status)  \(.cwd)  \(if .focused then "(focused)" else "" end)  pane=\(.pane_id)  tab=\(.tab_id)"'
+    echo "=== agents ==="
+    printf '%s\n' "$json_agents" | mm_jq '.result.agents[] | "\(.agent)  \(.agent_status)  \(.cwd)  \(if .focused then "(focused)" else "" end)  pane=\(.pane_id)  tab=\(.tab_id)"'
+}
+
+# cmd_probe : fastest possible "what is going on" - one herdr call, colour-coded
+# board mirroring the herdr TUI: yellow=busy/working, red=blocked (e.g. waiting
+# on a permission prompt), green=idle/done/ready. Shows time-in-state since the
+# previous probe, tracked in ~/.mymate/probe.state.
+cmd_probe() {
+  mm_require_herdr
+  local now json
+  now="$(date +%s)"
+  json="$(mm_agents_json)"
+
+  local dir="$HOME/.mymate"
+  mkdir -p "$dir"
+  local cache="$dir/probe.state" cache_tmp="$dir/probe.state.tmp"
+  [ -f "$cache" ] || : > "$cache"
+
+  local -A start=()
+  local line pane st ts
+  while IFS=$'\t' read -r pane st ts; do
+    [ -n "$pane" ] && start["$pane"]="$ts|$st"
+  done < "$cache"
+
+  : > "$cache_tmp"
+
+  echo "=== probe $(date +%H:%M:%S) ==="
+
+  local n s pid cwd foc color age base prev about
+  printf '%s\n' "$json" | mm_jq '.result.agents[] |
+    [(.name // (if .focused then "conductor" else .pane_id end)),
+     .agent_status, .pane_id, .cwd, (if .focused then 1 else 0 end)] | @tsv' |
+  while IFS=$'\t' read -r n s pid cwd foc; do
+    case "$s" in
+      working|busy) color=$'\e[33m' ;;
+      blocked|error) color=$'\e[31m' ;;
+      idle|done) color=$'\e[32m' ;;
+      *) color=$'\e[90m' ;;
+    esac
+    prev="${start[$pid]:-}"
+    if [ "${prev#*|}" = "$s" ]; then
+      age="$(( now - ${prev%%|*} ))s"
+    else
+      age=""
+    fi
+    start["$pid"]="$now|$s"
+    base="${cwd##*[/\\]}"
+    about=""
+    [ "$foc" = "1" ] && about=" (focused)"
+    printf '%s●%s %-10s %-8s %s%s%s\n' "$color" $'\e[0m' "$n" "$s" "${base:-$cwd}" "${age:+ [$age]}" "$about"
+    printf '%s\t%s\t%s\n' "$pid" "$s" "$now" >> "$cache_tmp"
+  done
+
+  mv -f "$cache_tmp" "$cache"
+
+  local counts
+  counts="$(printf '%s\n' "$json" | mm_jq '[.result.agents[] | .agent_status] | group_by(.) | map({key: .[0], value: length}) | from_entries | "busy=\(.working // 0) blocked=\(.blocked // 0) ready=\(((.idle // 0) + (.done // 0)))"')"
+  [ -n "$counts" ] && echo "$counts"
 }
 
 cmd_read() {
@@ -237,6 +295,7 @@ cmd_skills() {
 cmd="${1:-}"
 case "$cmd" in
   status) shift; cmd_status "$@" ;;
+  probe)  shift; cmd_probe "$@" ;;
   read)   shift; cmd_read "$@" ;;
   open)   shift; cmd_open "$@" ;;
   dispatch) shift; cmd_dispatch "$@" ;;

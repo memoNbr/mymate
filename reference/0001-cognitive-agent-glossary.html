@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference · Cognitive Agent Glossary</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<p class="nav"><a href="0001-what-mind-built-a-cognitive-agent-in-python.html">&larr; back to lesson 0001</a></p>
+<h1>Reference &middot; Cognitive Agent Glossary</h1>
+<p class="meta">The raw units of the first lesson. Quick-reference sheet; open it when a term makes you blink.</p>
+
+<h2>Core terms</h2>
+<table>
+<tr><th>Term</th><th>Plain-English meaning</th><th>Where it shows up in our code</th></tr>
+<tr>
+  <td><strong>Cognitive agent</strong></td>
+  <td>An LLM wrapped in a <em>persistent</em>&nbsp;architecture: memory + a reasoning loop + tools, so a stateless model can hold state and act over time.</td>
+  <td>The whole <code>CogAgent</code> class.</td>
+</tr>
+<tr>
+  <td><strong>Beliefs</strong></td>
+  <td>What the agent thinks is true right now (perception distilled).</td>
+  <td><code>self.beliefs</code> + <code>perceive()</code>.</td>
+</tr>
+<tr>
+  <td><strong>Desires</strong></td>
+  <td>Things the agent could want to do, each with a score.</td>
+  <td>The <code>GOALS</code> dict's <code>desire(x)</code> lambdas (0.5 / 0.8 / 0.9).</td>
+</tr>
+<tr>
+  <td><strong>Intention</strong></td>
+  <td>The strongest valid desire, <em>committed</em> — the one the agent will act on this cycle.</td>
+  <td><code>self.intention</code>, set in <code>cycle()</code>.</td>
+</tr>
+<tr>
+  <td><strong>Perception → belief</strong></td>
+  <td>Raw observation in, structured belief out (here: token primes).</td>
+  <td><code>perceive(observation)</code>.</td>
+</tr>
+<tr>
+  <td><strong>Act hook</strong></td>
+  <td>The pluggable "hands" of the agent — what it does once it intends something.</td>
+  <td><code>act_fn</code> / <code>default_act()</code> / your own override.</td>
+</tr>
+<tr>
+  <td><strong>Memory</strong></td>
+  <td>Recent trail of observations, kept short and full.</td>
+  <td><code>self.memory</code> (last 8) + <code>priors</code> on disk.</td>
+</tr>
+<tr>
+  <td><strong>Priors</strong></td>
+  <td>Carried-over knowledge/state (e.g. trust, ride count) that survives restarts.</td>
+  <td><code>priors</code> JSON in <code>cogarch_state.json</code>.</td>
+</tr>
+<tr>
+  <td><strong>CoALA</strong></td>
+  <td>A research frame: agents = memory &times; action space &times; reasoning loop. Good mental model for what our agent is.</td>
+  <td>Concept only (see lesson + resource list).</td>
+</tr>
+<tr>
+  <td><strong>BDI</strong></td>
+  <td>Belief–Desire–Intention: the classic goal-driven agent cycle we implement.</td>
+  <td><code>cycle()</code>: perceive &rarr; score desires &rarr; commit &rarr; act.</td>
+</tr>
+<tr>
+  <td><strong>Sampling cadence</strong></td>
+  <td>How often the loop breathes (time between cycles).</td>
+  <td><code>--cadence 0.2</code> (seconds).</td>
+</tr>
+<tr>
+  <td><strong>Trust / confidence</strong></td>
+  <td>A running score of how confident the agent is in its loop, blended with priors.</td>
+  <td><code>sample()</code> + <code>update_trust()</code>.</td>
+</tr>
+<tr>
+  <td><strong>EWMA</strong></td>
+  <td>Exponentially weighted moving average — a 60/40 blend of new evidence and carried priors.</td>
+  <td><code>0.6*conf + 0.4*p_t</code> in <code>update_trust</code>.</td>
+</tr>
+<tr>
+  <td><strong>OpenAI-compatible</strong></td>
+  <td>The one wire format (<code>POST /chat/completions</code>, Bearer key) that works with OpenAI, ollama, llama.cpp, vLLM, Google's /openai surface.</td>
+  <td><code>llm_call()</code>.</td>
+</tr>
+</table>
+
+<h2>One-sentence refreshers</h2>
+<ul class="tight">
+  <li><strong>Why memory matters:</strong> an LLM forgets everything between calls; memory + priors give it a past.</li>
+  <li><strong>Why intention matters:</strong> desires are noise; committing to the strongest one makes the agent actually do a thing each cycle.</li>
+  <li><strong>Why a model-agnostic loop is smart:</strong> you can swap the brain (OpenAI, ollama, Gemini, Groq…) without touching the architecture.</li>
+  <li><strong>Why trust blends priors:</strong> 60% new evidence + 40% history means it learns, but doesn't swing wildly.</li>
+</ul>
+
+<p class="upto"><a href="0001-what-mind-built-a-cognitive-agent-in-python.html">back to lesson 0001</a></p>
+</body>
+</html>

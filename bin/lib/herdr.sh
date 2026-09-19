@@ -65,6 +65,9 @@ mm_agent_keys() { herdr agent send-keys "$@"; }
 
 # mm_split_sibling : split a sibling pane preserving this pane's cwd, no focus.
 # Prints the new pane id. Requires HERDR_ENV=1.
+# Note: spawn via pane split instead of tab create - spawning on a freshly
+# created tab currently segfaults Bun (opencode TUI crash). Move the pane to
+# its own tab AFTER the agent has booted (see mm_dispatch_tab).
 mm_split_sibling() {
   mm_require_inside_herdr
   local out

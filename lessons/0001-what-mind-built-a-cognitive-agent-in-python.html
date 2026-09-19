@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 0001 · What mind built: a cognitive agent in Python</title>
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<p class="nav">Lesson 0001 &middot; <a href="../reference/0001-cognitive-agent-glossary.html">Glossary</a></p>
+<h1>What mind built: a cognitive agent in Python</h1>
+<p class="meta">20-minute lesson &middot; mission: understand the brain in our crew &amp; sim &middot; no deep dives, code first.</p>
+
+<h2>The one-sentence version</h2>
+<blockquote>
+A chatbot answers one question. A <strong>cognitive agent</strong> lives in a loop:
+it sees something, updates what it <em>believes</em>, scores what it could <em>desire</em>,
+commits to the strongest one as an <em>intention</em>, acts, reflects, and saves what it learned —
+so next time it starts smarter than it was.
+</blockquote>
+
+<p class="muted">That loop — belief &rarr; desire &rarr; intention &rarr; act &rarr; reflect &rarr; persist — is literally
+what <code>cogarch_bootstrap.py</code> (written by crew agent <em>mind</em>, 249 lines, stdlib only) does.
+Let's read it as a story, not as code.</p>
+
+<h2>Part 1 · The loop, in one picture</h2>
+<pre>
+   observation ──&gt; perceive()        ──&gt; beliefs (what agent thinks is true)
+                      │
+                      ▼
+                 score desires       ──&gt; observe .5 / explain .8 / decide .9
+                      │
+                      ▼
+                 commit strongest    ──&gt; intention (the one thing it'll do now)
+                      │
+                      ▼
+                 act (your hook)     ──&gt; "I commit to the goal and will act now"
+                      │
+                      ▼
+                 sample + trust      ──&gt; trust = 0.6×conf + 0.4×priors
+                      │
+                      ▼
+                 save()  ───────────&gt; priors+memory to cogarch_state.json
+</pre>
+
+<p>The loop breathes every <code>--cadence</code> seconds. Small loop, big idea: this is the same shape
+as the cabin sim's <code>bdiReason</code> — the seat/avatar agent deciding to respond to your ride.</p>
+
+<h2>Part 2 · Desires are manufactured, not felt</h2>
+<p>The agent doesn't "get feelings". It has a goal table with preconditions and scores:</p>
+<pre>
+GOALS = {
+  "observe": {"pre": lambda self: True,              "desire": lambda self, obs: 0.5},
+  "explain": {"pre": lambda self: bool(self.beliefs.get("primes")), "desire": lambda self, obs: 0.8},
+  "decide":  {"pre": lambda self: True,              "desire": lambda self, obs: 0.9},
+}
+</pre>
+<p>Each cycle it checks each goal: <em>is it allowed (pre)?</em> and <em>how badly do I want it (score)?</em>.
+The highest-scoring valid desire becomes this cycle's intention. That's <strong>BDI</strong>:
+beliefs decide what's possible, desires are ranked, intentions are commitments.</p>
+
+<h2>Part 3 · Memory so it isn't a goldfish</h2>
+<p>Two layers of "remembering":</p>
+<ul class="tight">
+  <li><strong>Working memory</strong> — the last 8 observations, kept in the process (<code>self.memory</code>).</li>
+  <li><strong>Long-term priors</strong> — <code>save()</code> writes priors + beliefs + memory + intention to
+      <code>cogarch_state.json</code>; <code>_load()</code> reads it at boot. Restart the agent tomorrow and
+      its trust and ride count are still there.</li>
+</ul>
+
+<h2>Part 4 · Trust: learn without swinging</h2>
+<pre>
+def update_trust(self, s):
+    self.trust   = 0.6 * s["conf"] + 0.4 * (self.priors.get("trust", 0.5))
+    self.priors["rides"]  += 1
+    self.priors["trust"]   = round(self.trust, 3)
+</pre>
+<p>New evidence counts 60%, carried history 40% — an <strong>EWMA</strong> blend. In the demo run it drips upward
+(0.500 &rarr; 0.530 &rarr; 0.572): it adapts, but doesn't panic on one weird sample.</p>
+
+<h2>Part 5 · Any brain, one wire</h2>
+<p><code>llm_call()</code> speaks exactly one dialect: <code>POST {base}/chat/completions</code> with a Bearer key.
+That single format works across <strong>OpenAI, ollama, llama.cpp, vLLM, Gemini's /openai surface, Groq</strong>.
+Config precedence is schoolbook-clean: <code>defaults &lt; .ini &lt; environment &lt; CLI flags</code>.</p>
+
+<div class="box ok">
+<h3>Your hands-on win (2 minutes)</h3>
+<p>Run the offline demo — no API, no install, Python only:</p>
+<pre>cd C:\Users\Win11 Pro\Memo\cognitive-agent-literature\tools
+python cogarch_bootstrap.py --demo</pre>
+<p>You'll see 3 cycles: "boot", the goal the agent commits to per cycle, and trust climbing.
+That's the entire loop, live. Want a real brain? Install <a href="https://ollama.com">ollama</a>,
+pull <code>qwen2.5:7b</code> (the default), and drop <code>--demo</code> — the script calls
+<code>http://localhost:11434/v1</code> automatically.</p>
+</div>
+
+<h2>The quiz — did it stick?</h2>
+<div class="quiz">
+<p class="q">Q1 · What makes an agent "cognitive" and not a chatbot?</p>
+<ul>
+  <li>It calls one huge model</li>
+  <li>It runs a memory loop</li>
+  <li>It uses a bigger corpus</li>
+  <li>It streams its answers</li>
+</ul>
+<p class="q">Q2 · In BDI, what does the agent commit to?</p>
+<ul>
+  <li>A random desire</li>
+  <li>The strongest desire</li>
+  <li>The cheapest action</li>
+  <li>The newest belief</li>
+</ul>
+<p class="q">Q3 · What does save() give the agent across restarts?</p>
+<ul>
+  <li>Its past priors</li>
+  <li>Its full source</li>
+  <li>Its model logs</li>
+  <li>Its network run</li>
+</ul>
+<p class="q">Q4 · Why blend trust with priors at 60/40?</p>
+<ul>
+  <li>To slow each cycle</li>
+  <li>To score the LLM</li>
+  <li>To stay adaptive</li>
+  <li>To hide the state</li>
+</ul>
+<p class="muted">(Answers: Q1 runs a memory loop &middot; Q2 the strongest desire &middot; Q3 its past priors &middot; Q4 to stay adaptive.)</p>
+</div>
+
+<h2>Where the cabin sim fits (the "so what")</h2>
+<p>The lesson's architecture isn't academic for us: the crew's cabin agent reasons through the same
+belief &rarr; desire &rarr; intention shape (<code>bdiReason</code>) to decide how the digital passenger
+responds to seat ride events. `cogarch_bootstrap.py` is that brain in its cleanest, model-agnostic form.</p>
+
+<h2>Take it further</h2>
+<ul class="tight">
+  <li><strong>Read next:</strong> CoALA (see <a href="../RESOURCES.md">RESOURCES.md</a>) — the "memory &times; action &times; loop" frame.</li>
+  <li><strong>Open the source:</strong> <code>cognitive-agent-literature/tools/cogarch_bootstrap.py</code> (249 lines).</li>
+  <li><strong>Reference sheet:</strong> <a href="../reference/0001-cognitive-agent-glossary.html">Cognitive Agent Glossary</a>.</li>
+</ul>
+
+<p><strong>Ask me anything that's unclear</strong> — I'm your teacher in this workspace, and follow-ups
+are how this sticks.</p>
+
+<footer>
+  Lesson 0001 · teaching workspace in mymate · built with the /teach skill (mattpocock/skills) ·
+  source: <code>cogarch_bootstrap.py</code> + <code>docs/cognitive-agents.html</code> by crew agent mind.
+</footer>
+
+</body>
+</html>
