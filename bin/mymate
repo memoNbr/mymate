@@ -126,10 +126,18 @@ cmd_probe() {
   echo "=== probe $(date +%H:%M:%S) ==="
 
   local n s pid cwd foc color age base prev about
+  local effective="${USERPROFILE:-$HOME}/.mymate/effective-colors.state"
+  local -A effective_states=()
+  if [ -f "$effective" ]; then
+    while IFS=$'\t' read -r ename estate; do
+      [ -n "$ename" ] && effective_states["$ename"]="$estate"
+    done < "$effective"
+  fi
   printf '%s\n' "$json" | mm_jq '.result.agents[] |
     [(.name // (if .focused then "conductor" else .pane_id end)),
      .agent_status, .pane_id, .cwd, (if .focused then 1 else 0 end)] | @tsv' |
   while IFS=$'\t' read -r n s pid cwd foc; do
+    [ -n "${effective_states[$n]:-}" ] && s="${effective_states[$n]}"
     case "$s" in
       working|busy) color=$'\e[33m' ;;
       blocked|error) color=$'\e[31m' ;;
@@ -169,8 +177,18 @@ mm_colorof() {
 
 # mm_color_snapshot : name TAB state lines for every agent, sorted by name.
 mm_color_snapshot() {
-  mm_agents_json | mm_jq '.result.agents[] |
-    [(.name // .pane_id), .agent_status] | @tsv' | tr -d '\r' | sort
+  local effective="${USERPROFILE:-$HOME}/.mymate/effective-colors.state"
+  declare -A effective_states=()
+  if [ -f "$effective" ]; then
+    while IFS=$'\t' read -r ename estate; do
+      [ -n "$ename" ] && effective_states["$ename"]="$estate"
+    done < "$effective"
+  fi
+  while IFS=$'\t' read -r name state; do
+    [ -n "${effective_states[$name]:-}" ] && state="${effective_states[$name]}"
+    printf '%s\t%s\n' "$name" "$state"
+  done < <(mm_agents_json | mm_jq '.result.agents[] |
+    [(.name // .pane_id), .agent_status] | @tsv' | tr -d '\r' | sort)
 }
 
 # cmd_check : one-shot diff against the last known colors

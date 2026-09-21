@@ -23,6 +23,8 @@ agent. Everything else is plain shell over the herdr CLI.
 - `watch-herdr.ps1` — optional Windows bridge that polls state changes,
   displays an immediate Herdr notification, and records transition alerts for
   the conductor to read and relay.
+- `herdr-status-plugin\` — installed local Herdr event hook that receives
+  `pane.agent_status_changed` directly and forwards it to the conductor inbox.
 - `mymate talk <target> "<text>"` — steer one agent ("shipshape the login
   test", "pause and report findings") through its native prompt surface.
 - `mymate read <target>`, `mymate keys <target> esc` — inspect or poke an
@@ -74,12 +76,20 @@ From a Herdr-managed PowerShell pane, run:
 .\watch-herdr.ps1
 ```
 
-The bridge polls `mymate status --json` once per second. It treats per-agent
-state as authoritative, shows a request notification for `blocked`, and
-records transitions in `%LOCALAPPDATA%\mymate\herdr-alerts.jsonl`. It also
-maintains `herdr-state.json` and `herdr-blockers.json` in that directory so
-the conductor can immediately read the current state and active blockers. It
-never answers permission prompts or sends agent input automatically; the
+The installed event plugin receives native `pane.agent_status_changed` events
+without polling and writes `herdr-event-alerts.jsonl`. It shows a request
+notification for `blocked` and appends high-priority entries to the conductor
+inbox. `watch-herdr.ps1` remains a reconciliation fallback: it polls
+`mymate status --json`, maintains `herdr-state.json` and `herdr-blockers.json`,
+and checks visible panes only for prompts that native lifecycle state misses.
+Every blocked transition is also appended to
+`herdr-conductor-inbox.jsonl`, a durable high-priority queue that the conductor
+must read and relay before routing other work.
+The watcher also writes effective states to
+`%USERPROFILE%\.mymate\effective-colors.state`; `mymate probe`, `check`, and
+`watch` use this override so visible permission prompts are shown as red even
+when an integration incorrectly reports yellow/working.
+It never answers permission prompts or sends agent input automatically; the
 conductor must read the target and relay the captain's decision.
 
 MIT — see LICENSE.

@@ -1,6 +1,7 @@
 param(
     [int]$IntervalSeconds = 1,
-    [string]$AlertLog = (Join-Path $env:LOCALAPPDATA "mymate\herdr-alerts.jsonl")
+    [string]$AlertLog = (Join-Path $env:LOCALAPPDATA "mymate\herdr-alerts.jsonl"),
+    [bool]$AutoApproveSafe = $true
 )
 
 if ($env:HERDR_ENV -ne "1") {
@@ -15,9 +16,21 @@ $logDirectory = Split-Path -Parent $AlertLog
 New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
 $stateFile = Join-Path $logDirectory "herdr-state.json"
 $blockerFile = Join-Path $logDirectory "herdr-blockers.json"
+$inboxFile = Join-Path $logDirectory "herdr-conductor-inbox.jsonl"
+$automationLog = Join-Path $logDirectory "herdr-auto-approvals.jsonl"
+$effectiveColorFile = Join-Path (Join-Path $env:USERPROFILE ".mymate") "effective-colors.state"
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $effectiveColorFile) | Out-Null
 
 $previous = @{}
 $hasBaseline = $false
+
+function Test-SafeProjectPrompt([string]$Target, [string]$Visible) {
+    $trustedTarget = $Target -in @("cabin-mind", "cabin-avatar", "aae-core", "aae-scouts")
+    $diffPrompt = $Visible -match "(?m)^\s*\d+\s+[+-]\s+\S"
+    $readOrEdit = $Visible -match "(?im)\b(Read|Edit|Create|Write)\b" -or $diffPrompt
+    $dangerous = $Visible -match "(?im)\b(Delete|Remove|Reset|Push|Publish)\b|\.env|secret|credential|token|password|ssh"
+    return $trustedTarget -and $readOrEdit -and -not $dangerous
+}
 
 while ($true) {
     $current = @{}
@@ -41,17 +54,46 @@ while ($true) {
             } else {
                 "$($agent.agent):$($agent.pane_id)"
             }
-            $state = [string]$agent.agent_status
+            $rawState = [string]$agent.agent_status
+            $visible = (& herdr agent read $target --source visible --lines 40 2>$null | Out-String)
+            $hasVisiblePrompt = $visible -match
+                "(?im)Permission required|Allow once|Allow always|Reject|Action Required"
+            if ($AutoApproveSafe -and $hasVisiblePrompt -and (Test-SafeProjectPrompt $target $visible)) {
+                & mymate key $target down enter 2>$null | Out-Null
+                [ordered]@{
+                    timestamp = [DateTimeOffset]::UtcNow.ToString("o")
+                    target = $target
+                    pane_id = [string]$agent.pane_id
+                    action = "allow-always"
+                    reason = "trusted non-destructive cabin/AAE project prompt"
+                } | ConvertTo-Json -Compress | Add-Content -LiteralPath $automationLog
+                Start-Sleep -Milliseconds 250
+                $visible = (& herdr agent read $target --source visible --lines 40 2>$null | Out-String)
+                $hasVisiblePrompt = $visible -match
+                    "(?im)Permission required|Allow once|Allow always|Reject|Action Required"
+            }
+            $state = if ($rawState -eq "working" -and $hasVisiblePrompt) {
+                "blocked"
+            } else {
+                $rawState
+            }
             $current[$target] = $state
             $records.Add([pscustomobject][ordered]@{
                 target = $target
                 pane_id = [string]$agent.pane_id
                 state = $state
+                raw_state = $rawState
+                detection = if ($hasVisiblePrompt) { "visible-prompt" } else { "integration" }
             })
 
             $changed = ($state -eq "blocked" -and -not $hasBaseline) -or
                 ($hasBaseline -and (($previous[$target] -as [string]) -ne $state))
             if (-not $changed) {
+                continue
+            }
+            # Native Herdr events own integration state transitions. This loop
+            # only raises alerts for visible prompts that native state missed.
+            if ($rawState -eq "blocked") {
                 continue
             }
 
@@ -64,14 +106,19 @@ while ($true) {
 
             & herdr notification show $title --body $body --sound $severity 2>$null | Out-Null
 
-            [ordered]@{
+            $alert = [ordered]@{
                 timestamp = [DateTimeOffset]::UtcNow.ToString("o")
                 target = $target
                 pane_id = [string]$agent.pane_id
                 previous_state = [string]$previous[$target]
                 state = $state
                 action = if ($state -eq "blocked") { "read-and-relay" } else { "observe" }
-            } | ConvertTo-Json -Compress | Add-Content -LiteralPath $AlertLog
+                requires_conductor_action = ($state -eq "blocked")
+            }
+            $alert | ConvertTo-Json -Compress | Add-Content -LiteralPath $AlertLog
+            if ($state -eq "blocked") {
+                $alert | ConvertTo-Json -Compress | Add-Content -LiteralPath $inboxFile
+            }
         }
     }
 
@@ -85,6 +132,8 @@ while ($true) {
         timestamp = $timestamp
         blockers = @($records | Where-Object { $_.state -eq "blocked" })
     } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $blockerFile
+    @($records | ForEach-Object { "$($_.target)`t$($_.state)" }) |
+        Set-Content -LiteralPath $effectiveColorFile
 
     $previous = $current
     $hasBaseline = $true

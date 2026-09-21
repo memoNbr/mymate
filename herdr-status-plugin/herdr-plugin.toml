@@ -1,0 +1,10 @@
+id = "mymate.herdr-status"
+name = "Mymate Herdr Status Bridge"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Forward Herdr agent status events to the mymate conductor inbox."
+platforms = ["windows"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "status-event.ps1"]
