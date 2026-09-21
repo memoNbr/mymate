@@ -20,6 +20,9 @@ agent. Everything else is plain shell over the herdr CLI.
   when it settles.
 - `mymate watch` — keep an eye on the crew; it prints when an agent changes
   state, turns `blocked`, or finishes.
+- `watch-herdr.ps1` — optional Windows bridge that polls state changes,
+  displays an immediate Herdr notification, and records transition alerts for
+  the conductor to read and relay.
 - `mymate talk <target> "<text>"` — steer one agent ("shipshape the login
   test", "pause and report findings") through its native prompt surface.
 - `mymate read <target>`, `mymate keys <target> esc` — inspect or poke an
@@ -62,5 +65,21 @@ conductor skill is at `mymate.skill.md`). The conductor takes over from there.
   pane, tab, or workspace the captain did not ask about.
 - IDs are parsed from herdr's JSON responses, never guessed from ordering.
 - Everything is one bash file you can read end to end.
+
+### Immediate Windows signal bridge
+
+From a Herdr-managed PowerShell pane, run:
+
+```powershell
+.\watch-herdr.ps1
+```
+
+The bridge polls `mymate status --json` once per second. It treats per-agent
+state as authoritative, shows a request notification for `blocked`, and
+records transitions in `%LOCALAPPDATA%\mymate\herdr-alerts.jsonl`. It also
+maintains `herdr-state.json` and `herdr-blockers.json` in that directory so
+the conductor can immediately read the current state and active blockers. It
+never answers permission prompts or sends agent input automatically; the
+conductor must read the target and relay the captain's decision.
 
 MIT — see LICENSE.

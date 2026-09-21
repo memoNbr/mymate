@@ -1,0 +1,19 @@
+﻿CABIN DRAW - continue the cabin drawing.
+
+CAPTAIN (verbatim): "I like to continue implementing cabin draw ... I want realistic drawing but empty interior for now, we fill it later. maybe it is realistic drawing of black white porsche. If it is not possible to draw or implement black white porsche then we need to talk on other options."
+
+DO ALL:
+1. Continue in C:\Users\Win11 Pro\Memo\cabin-agent-sim.
+2. Empty interior NOW: strip the furniture/occupant fixtures (luggage, tech, coffee) so the cabin reads as freshly-delivered and EMPTY. Keep only sculpted surfaces: dash, doors, seats, center console, steering wheel. Keep the seat rig / agent mount / mounts as invisible anchors for later filling (do not delete infrastructure).
+3. Aim: realistic, black-and-white Porsche (monochrome). Interior neutral monochrome (black + grays + off-white), NO full-color. Red GTS accents only as a thin hairline if at all; monochrome-first.
+4. Keep the cognitive loop + avatar loop (perceive->reason->act, trust survey) working: only the interior LOOK changes, not the loop.
+5. If a REAL black/white Porsche render is NOT achievable with the current stack: DO NOT fake it生产方式. Come back to the captain with 2-3 concrete options (e.g. monochrome/toon shader, silhouette render, line-art sheet, or a different renderer). This is the captain's explicit fallback request.
+6. Empty = no HUD content for now (blank/off). The seat adventure can stay.
+
+PROOF OF DONE (in final reply):
+- files changed in cabin-agent-sim
+- one-liner "what the cabin NOW looks like (empty interior?, black/white?)"
+- black/white Porsche render achievable: yes|no + why
+- build/verify command run + it passed: yes|no
+
+Commit to git in cabin-agent-sim and leave the pane idle.
