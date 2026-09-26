@@ -1,13 +1,9 @@
+# mymate
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/mymate-logo-dark.png">
   <img src="assets/mymate-logo.png" width="358" height="120" alt="mymate">
 </picture>
-
-# mymate
-
-> **Reconcile draft:** this README merges the conductor-tooling documentation
-> with the published landing page and field-notes sections. The captain should
-> review this wording before it is treated as the canonical README.
 
 **Conductor for a crew of coding agents.** mymate observes the agents running in
 [herdr](https://herdr.dev) panes, keeps the captain informed, and hands work to
