@@ -64,7 +64,6 @@ mymate talk <target> "<text>"
 | `watch-herdr.ps1` | reconciliation / visible-prompt fallback watcher |
 | `herdr-server-failsafe.ps1` | restarts a dead Herdr server |
 | `backup-herdr-session.ps1` | snapshots `session.json` before risky operations |
-| `recreate-lost-tabs.ps1` | rebuilds a lost Herdr layout |
 | `index.html`, `style.css`, `script.js`, `assets/site.css` | the published landing page and its stylesheet |
 | `briefs/`, `lessons/`, `learning-records/`, `reference/` | field notes, briefs, and reference material |
 | `MISSION.md`, `NOTES.md`, `RESOURCES.md`, `LICENSE` | project background and licensing |
