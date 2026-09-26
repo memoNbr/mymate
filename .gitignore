@@ -1,0 +1,6 @@
+.mymate-state/
+.mymate-bootstrap-test/
+
+# Belongs to Herdr, not to this repo. `mymate skills fetch` regenerates it
+# from `herdr --skill` during install.
+skills/herdr.skill.md

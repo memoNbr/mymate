@@ -1,0 +1,468 @@
+#!/usr/bin/env bash
+# mymate - a tiny conductor for agents running in herdr panes.
+# See README.md and mymate.skill.md. One bash file; read it end to end.
+set -euo pipefail
+
+MM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$MM_ROOT/bin/lib/herdr.sh"
+. "$MM_ROOT/bin/lib/install.sh"
+
+VERSION_FILE="$MM_ROOT/VERSION"
+if [ -f "$VERSION_FILE" ]; then
+  VERSION="$(tr -d '\r\n' < "$VERSION_FILE")"
+else
+  VERSION="0.2.0"
+fi
+[ -n "$VERSION" ] || VERSION="0.2.0"
+PLUGIN_VERSION="$(mm_manifest_field version "$MM_ROOT/herdr-status-plugin/herdr-plugin.toml" 2>/dev/null || printf 'unknown')"
+
+usage() {
+  cat <<'EOF'
+mymate - observe and lead a crew of agents in herdr panes
+
+Usage: mymate <command> [args]
+
+Observe:
+  status [--json]                 Crew board: workspaces + agents and their states
+  probe                           Fast color board: yellow=busy, red=blocked, green=ready (+ time-in-state)
+  check                           Diff colors vs last snapshot; print what changed
+  watch [--interval S]            Live watcher: OS-notifies on any color change
+  read <target> [--lines N]       Read an agent's recent output (read-only)
+
+Open:
+  open [name] [--kind KIND]       Pop a focused mymate conductor pane you can
+                                  talk to (like firstmate's open-in-herdr).
+                                  Reuses the pane if the conductor already exists
+
+Lead:
+  dispatch <name> <kind> "<brief>" [--skill FILE] [-- agent-args...]
+                                  Open a sibling pane, start a <kind> worker
+                                  named <name>, hand it the skill + brief
+  talk <target> "<text>"          Steer an agent (blocking: waits to settle)
+  key <target> <key> [...]        Send keys (esc, ctrl+c, ...)
+
+Watch:
+  watch [--until STATE...] [--timeout MS] [--interval S]
+                                  Print state changes until states are reached
+
+Skills:
+  skills list                     List local skills under skills/
+  skills fetch                    Refresh skills/herdr.skill.md from installed herdr
+  skills add <url>                Download any skill.md to base workers on
+  skills new <name>               Scaffold a starter worker skill
+
+Bootstrap:
+  install [--force] [--dry-run]   Idempotent bootstrap; never edits PATH silently
+  doctor                          Check herdr, PATH, plugin, skill, and state dir
+
+  help | --help | -h              This message
+  --version                       Name, version, and plugin version
+EOF
+}
+
+# --- open -----------------------------------------------------------------
+
+cmd_open() {
+  mm_require_herdr
+  mm_require_inside_herdr
+  local name="mymate" kind="opencode"
+  [ "${1:-}" = "--kind" ] && { name="mymate"; kind="${2:-opencode}"; shift 2 2>/dev/null; }
+  [ -n "${1:-}" ] && name="$1"
+
+  if mm_agent_names | grep -qxF "$name"; then
+    echo "conductor '$name' already open; focusing it."
+    mm_agent_focus "$name" >/dev/null
+    return 0
+  fi
+
+  echo "opening conductor '$name' in a focused pane (kind: $kind, cwd: $MM_ROOT)..."
+  local pane_id
+  pane_id="$(mm_split_focused "$MM_ROOT")"
+  echo "  pane: $pane_id"
+
+  mm_agent_start "$name" --kind "$kind" --pane "$pane_id" || die "worker start failed (is kind '$kind' available?)"
+
+  local tab_pane
+  if tab_pane="$(mm_dispatch_tab "$pane_id" "Mymate Conductor" --focus)"; then
+    pane_id="$tab_pane"
+  else
+    printf '%s\n' "warning: conductor is running, but could not move it to its own labelled tab" >&2
+  fi
+
+  local text contract
+  contract="$(cat "$MM_ROOT/mymate.skill.md")"
+  text="$(printf '%s\n\n---\n\n%s\n' "You are now the mymate conductor. Read your contract, introduce yourself to the captain in one short paragraph, then wait for the captain's first command." "$contract")"
+  mm_agent_prompt "$name" "$text" --timeout 60000 >/dev/null 2>&1 || true
+
+  echo "conductor ready: $name @ $pane_id"
+  echo "you are in its pane now. later: mymate talk $name \"...\" from any herdr pane"
+}
+
+# --- observe ---------------------------------------------------------------
+
+cmd_status() {
+  mm_require_herdr
+  local json_agents json_ws
+  json_agents="$(mm_agents_json)"
+  json_ws="$(mm_workspaces_json)"
+
+  if [ "${1:-}" = "--json" ]; then
+    printf '%s\n%s\n' "$json_ws" "$json_agents"
+    return 0
+  fi
+
+  echo "=== workspaces ==="
+  printf '%s\n' "$json_ws" | mm_jq '.result.workspaces[] | "\(.workspace_id)  \(.label)  tabs=\(.tab_count) panes=\(.pane_count)  agent=\(.agent_status)"'
+echo
+
+    echo "=== agents ==="
+    printf '%s\n' "$json_agents" | mm_jq '.result.agents[] | "\(.agent)  \(.agent_status)  \(.cwd)  \(if .focused then "(focused)" else "" end)  pane=\(.pane_id)  tab=\(.tab_id)"'
+}
+
+# cmd_probe : fastest possible "what is going on" - one herdr call, colour-coded
+# board mirroring the herdr TUI: yellow=busy/working, red=blocked (e.g. waiting
+# on a permission prompt), green=idle/done/ready. Shows time-in-state since the
+# previous probe, tracked in %LOCALAPPDATA%\mymate/probe.state.
+cmd_probe() {
+  mm_require_herdr
+  local now json
+  now="$(date +%s)"
+  json="$(mm_agents_json)"
+
+  local dir="$MM_DATA_DIR"
+  mkdir -p "$dir"
+  local cache="$dir/probe.state" cache_tmp="$dir/probe.state.tmp"
+  [ -f "$cache" ] || : > "$cache"
+
+  local -A start=()
+  local line pane st ts
+  while IFS=$'\t' read -r pane st ts; do
+    [ -n "$pane" ] && start["$pane"]="$ts|$st"
+  done < "$cache"
+
+  : > "$cache_tmp"
+
+  echo "=== probe $(date +%H:%M:%S) ==="
+
+  local n s pid cwd foc color age base prev about
+  local effective="$MM_DATA_DIR/effective-colors.state"
+  local -A effective_states=()
+  if [ -f "$effective" ]; then
+    while IFS=$'\t' read -r ename estate; do
+      [ -n "$ename" ] && effective_states["$ename"]="$estate"
+    done < "$effective"
+  fi
+  printf '%s\n' "$json" | mm_jq '.result.agents[] |
+    [(.name // (if .focused then "conductor" else .pane_id end)),
+     .agent_status, .pane_id, .cwd, (if .focused then 1 else 0 end)] | @tsv' |
+  while IFS=$'\t' read -r n s pid cwd foc; do
+    [ -n "${effective_states[$n]:-}" ] && s="${effective_states[$n]}"
+    case "$s" in
+      working|busy) color=$'\e[33m' ;;
+      blocked|error) color=$'\e[31m' ;;
+      idle|done) color=$'\e[32m' ;;
+      *) color=$'\e[90m' ;;
+    esac
+    prev="${start[$pid]:-}"
+    if [ "${prev#*|}" = "$s" ]; then
+      age="$(( now - ${prev%%|*} ))s"
+    else
+      age=""
+    fi
+    start["$pid"]="$now|$s"
+    base="${cwd##*[/\\]}"
+    about=""
+    [ "$foc" = "1" ] && about=" (focused)"
+    printf '%s●%s %-10s %-8s %s%s%s\n' "$color" $'\e[0m' "$n" "$s" "${base:-$cwd}" "${age:+ [$age]}" "$about"
+    printf '%s\t%s\t%s\n' "$pid" "$s" "$now" >> "$cache_tmp"
+  done
+
+  mv -f "$cache_tmp" "$cache"
+
+  local counts
+  counts="$(printf '%s\n' "$json" | mm_jq '[.result.agents[] | .agent_status] | group_by(.) | map({key: .[0], value: length}) | from_entries | "busy=\(.working // 0) blocked=\(.blocked // 0) ready=\(((.idle // 0) + (.done // 0)))"')"
+  [ -n "$counts" ] && echo "$counts"
+}
+
+# Color lookup shared by check/watch: state -> (short label, ANSI color).
+mm_colorof() {
+  case "$1" in
+    working|busy) printf '%s' $'\e[33m' ;;
+    blocked|error) printf '%s' $'\e[31m' ;;
+    idle|done) printf '%s' $'\e[32m' ;;
+    *) printf '%s' $'\e[90m' ;;
+  esac
+}
+
+# mm_color_snapshot : name TAB state lines for every agent, sorted by name.
+mm_color_snapshot() {
+  local effective="$MM_DATA_DIR/effective-colors.state"
+  declare -A effective_states=()
+  if [ -f "$effective" ]; then
+    while IFS=$'\t' read -r ename estate; do
+      [ -n "$ename" ] && effective_states["$ename"]="$estate"
+    done < "$effective"
+  fi
+  while IFS=$'\t' read -r name state; do
+    [ -n "${effective_states[$name]:-}" ] && state="${effective_states[$name]}"
+    printf '%s\t%s\n' "$name" "$state"
+  done < <(mm_agents_json | mm_jq '.result.agents[] |
+    [(.name // .pane_id), .agent_status] | @tsv' | tr -d '\r' | sort)
+}
+
+# cmd_check : one-shot diff against the last known colors
+# (%LOCALAPPDATA%\mymate/colors.state). Prints rows whose color CHANGED since the state
+# was recorded, then records the new colors. This is the conductor's
+# "wake-up" move: run it the moment the captain pings to surface anything
+# that finished or went red meanwhile.
+cmd_check() {
+  mm_require_herdr
+  local dir="$MM_DATA_DIR"
+  mkdir -p "$dir"
+  local state="$dir/colors.state" tmp="$dir/colors.state.tmp"
+  [ -f "$state" ] || : > "$state"
+
+  local -A prev=()
+  local line prev_n prev_s
+  while IFS=$'\t' read -r prev_n prev_s; do
+    [ -n "$prev_n" ] && prev["$prev_n"]="$prev_s"
+  done < "$state"
+
+  local now_n now_s changed=0
+  while IFS=$'\t' read -r now_n now_s; do
+    if [ "${prev[$now_n]:-}" != "$now_s" ]; then
+      changed=$(( changed + 1 ))
+      local c col old
+      [ -n "${prev[$now_n]:-}" ] && old="(${prev[$now_n]} -> $now_s)" || old="(new: $now_s)"
+      c="$(mm_colorof "$now_s")"
+      printf '%s●%s %-10s %s\n' "$c" $'\e[0m' "$now_n" "$old"
+    fi
+    printf '%s\t%s\n' "$now_n" "$now_s" >> "$tmp"
+  done < <(mm_color_snapshot)
+
+  mv -f "$tmp" "$state"
+  if [ "$changed" = "0" ]; then
+    echo "all colors unchanged since last check"
+  else
+    echo "checked: $changed agent(s) changed"
+  fi
+}
+
+# cmd_watch : live background watcher. Every INTERVAL seconds it diffs colors
+# against the last snapshot and, on any change, fires an OS notification via
+# `herdr notification show` (title = agent, body = old -> new, sound by color)
+# and prints the change to stdout. Run it in its own pane / backgrounded so it
+# keeps pinging while the conductor is idle.
+cmd_watch() {
+  mm_require_herdr
+  local interval="${1:-5}"
+  case "$interval" in
+    --interval) interval="${2:-5}" ;;
+  esac
+  [ "$interval" -ge 1 ] 2>/dev/null || interval=5
+  echo "watching colors every ${interval}s (yellow=busy red=blocked green=idle/done); Ctrl-C to stop"
+
+  local dir="$MM_DATA_DIR"
+  mkdir -p "$dir"
+  local state="$dir/colors.state"
+  : > "$state"
+
+  while true; do
+    mm_check_loop "$state"
+    sleep "$interval"
+  done
+}
+
+# mm_check_loop <statefile> : diff + notify once (shared by watch).
+mm_check_loop() {
+  local state="$1" tmp="$1.tmp"
+  local -A prev=()
+  local prev_n prev_s
+  while IFS=$'\t' read -r prev_n prev_s; do
+    [ -n "$prev_n" ] && prev["$prev_n"]="$prev_s"
+  done < "$state"
+
+  local now_n now_s found=0
+  while IFS=$'\t' read -r now_n now_s; do
+    if [ "${prev[$now_n]:-}" != "$now_s" ]; then
+      found=1
+      local c old desc sound
+      if [ -n "${prev[$now_n]:-}" ]; then
+        old="${prev[$now_n]} -> $now_s"
+      else
+        old="new agent: $now_s"
+      fi
+      c="$(mm_colorof "$now_s")"
+      printf '%s %s●%s %-10s %s\n' "$(date +%H:%M:%S)" "$c" $'\e[0m' "$now_n" "$old"
+      case "$now_s" in blocked|error) sound="request" ;; done|idle) sound="done" ;; *) sound="none" ;; esac
+      herdr notification show "$now_n" --body "$old" --sound "$sound" 2>/dev/null >/dev/null &
+    fi
+    printf '%s\t%s\n' "$now_n" "$now_s" >> "$tmp"
+  done < <(mm_color_snapshot)
+  mv -f "$tmp" "$state"
+}
+
+cmd_read() {
+  mm_require_herdr
+  [ $# -ge 1 ] || { echo "usage: mymate read <target> [--lines N]"; return 1; }
+  mm_agent_read "$@" 2>&1
+}
+
+# --- lead ------------------------------------------------------------------
+
+cmd_dispatch() {
+  mm_require_herdr
+  mm_require_inside_herdr
+  local name kind brief skill=""
+  name="${1:-}"; kind="${2:-}"; brief="${3:-}"
+  [ -n "$name" ] && [ -n "$kind" ] && [ -n "$brief" ] || {
+    echo "usage: mymate dispatch <name> <kind> \"<brief>\" [--skill FILE] [-- agent-args...]"; return 1; }
+  shift 3
+
+  case "${1:-}" in
+    --skill) skill="${2:-}"; shift 2 ;;
+  esac
+
+  [ -z "$skill" ] || [ -f "$skill" ] || die "skill file not found: $skill"
+
+  echo "opening a sibling pane..."
+  local pane_id
+  pane_id="$(mm_split_sibling)"
+  echo "  pane: $pane_id"
+
+  echo "starting worker '$name' (kind: $kind)..."
+  mm_agent_start "$name" --kind "$kind" --pane "$pane_id" "$@"
+  local tab_pane
+  if tab_pane="$(mm_dispatch_tab "$pane_id" "$name" --no-focus)"; then
+    pane_id="$tab_pane"
+  else
+    printf '%s\n' "warning: worker is running, but could not move it to its own labelled tab" >&2
+  fi
+  echo "  ready: $name @ $pane_id"
+
+  local prompt_text="$brief"
+  if [ -n "$skill" ]; then
+    prompt_text="$(printf '%s\n\n---\n\n%s\n\n---\n%s\n' 'Read this skill first.' "$(cat "$skill")" "$brief")"
+  fi
+  echo "handing over the brief..."
+  mm_agent_prompt "$name" "$prompt_text" --wait --timeout 300000 >/dev/null
+  echo "dispatch complete: $name"
+  echo "next: mymate status | mymate talk $name \"...\""
+}
+
+cmd_talk() {
+  mm_require_herdr
+  mm_require_inside_herdr
+  local target="${1:-}" text="${2:-}"
+  [ -n "$target" ] && [ -n "$text" ] || { echo "usage: mymate talk <target> \"<text>\""; return 1; }
+  # Steer and wait for the settled state; report what changed.
+  mm_agent_prompt "$target" "$text" --wait --timeout 600000 >/dev/null
+  mm_agent_get "$target" | mm_jq '. | "\(.agent) is \(.agent_status)"'
+}
+
+cmd_key() {
+  mm_require_herdr
+  mm_require_inside_herdr
+  local target="${1:-}"
+  [ -n "$target" ] && shift || { echo "usage: mymate key <target> <key> [...]"; return 1; }
+  mm_agent_keys "$target" "$@" >/dev/null
+  mm_agent_get "$target" | mm_jq '. | "\(.agent) is \(.agent_status)"'
+}
+
+# --- watch -----------------------------------------------------------------
+
+cmd_watch() {
+  mm_require_herdr
+  local until_states="" timeout_ms=600000 interval=2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --until) until_states="${2:-}"; shift 2 ;;
+      --timeout) timeout_ms="${2:-}"; shift 2 ;;
+      --interval) interval="${2:-}"; shift 2 ;;
+      *) echo "usage: mymate watch [--until idle,blocked,done] [--timeout MS] [--interval S]"; return 1 ;;
+    esac
+  done
+
+  local deadline=$(( $(date +%s) + timeout_ms / 1000 ))
+  local prev="" cur
+  local -A seen_states=()
+  echo "watching (interval ${interval}s)..."
+  while :; do
+    cur="$(mm_agents_json | mm_jq '.result.agents[] | "\(.agent)|\(.agent_status)|\(.cwd)"')"
+    if [ "$cur" != "$prev" ]; then
+      printf '%s :: %s\n' "$(date +%H:%M:%S)" "$cur"
+      prev="$cur"
+    fi
+    if [ -n "$until_states" ]; then
+      # settle when every requested state currently has at least one occupant
+      local s all=1
+      for s in $until_states; do
+        printf '%s\n' "$cur" | grep -q "|${s}|" || { all=0; break; }
+      done
+      [ "$all" = 1 ] && { echo "reached: $until_states"; return 0; }
+    fi
+    [ "$(date +%s)" -lt "$deadline" ] || { echo "timeout (${timeout_ms}ms)"; return 1; }
+    sleep "$interval"
+  done
+}
+
+# --- skills ----------------------------------------------------------------
+
+cmd_skills() {
+  local sub="${1:-}"
+  case "$sub" in
+    list)
+      [ -d "$MM_ROOT/skills" ] && for f in "$MM_ROOT"/skills/*.skill.md; do [ -f "$f" ] && echo "  $(basename "$f")"; done
+      ;;
+    fetch)
+      mm_require_herdr
+      local out="$MM_ROOT/skills/herdr.skill.md"
+      herdr --skill > "$out"
+      echo "refreshed $out ($(wc -c < "$out") bytes)"
+      ;;
+    add)
+      local url="${2:-}"
+      [ -n "$url" ] || die "usage: mymate skills add <url>"
+      local name
+      name="$(basename "$url")"
+      mkdir -p "$MM_ROOT/skills"
+      curl -fsSL "$url" -o "$MM_ROOT/skills/$name"
+      echo "downloaded skills/$name"
+      ;;
+    new)
+      local name="${2:-}"
+      [ -n "$name" ] || die "usage: mymate skills new <name>"
+      mkdir -p "$MM_ROOT/skills"
+      local f="$MM_ROOT/skills/$name.skill.md"
+      [ -e "$f" ] && die "already exists: $f"
+      sed "s/^name: starter/name: $name/" "$MM_ROOT/skills/starter.skill.md" > "$f"
+      echo "scaffolded $f - edit the brief line, then dispatch with --skill $f"
+      ;;
+    *)
+      echo "usage: mymate skills list|fetch|add <url>|new <name>"; return 1 ;;
+  esac
+}
+
+# --- main ------------------------------------------------------------------
+
+cmd="${1:-}"
+case "$cmd" in
+  status) shift; cmd_status "$@" ;;
+  probe)  shift; cmd_probe "$@" ;;
+  check)  shift; cmd_check "$@" ;;
+  watch)  shift; cmd_watch "$@" ;;
+  read)   shift; cmd_read "$@" ;;
+  open)   shift; cmd_open "$@" ;;
+  dispatch) shift; cmd_dispatch "$@" ;;
+  talk)   shift; cmd_talk "$@" ;;
+  key)    shift; cmd_key "$@" ;;
+  install) shift; cmd_install "$@" ;;
+  doctor)  shift; cmd_doctor "$@" ;;
+  skills) shift; cmd_skills "$@" ;;
+  help|--help|-h) usage ;;
+  --version)
+    printf 'mymate %s\n' "$VERSION"
+    printf 'mymate.herdr-status %s\n' "$PLUGIN_VERSION"
+    ;;
+  *) usage; exit 1 ;;
+esac

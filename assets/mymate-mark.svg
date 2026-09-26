@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16"
+     shape-rendering="crispEdges" role="img" aria-label="mymate">
+  <!-- mymate mark: a CLI prompt (>) with a block cursor on a 16px pixel grid.
+       The small mark for favicons, avatars and anywhere the wordmark is too wide. -->
+  <g fill="#0a0a0a">
+    <rect x="3" y="3"  width="3" height="2"/>
+    <rect x="4" y="5"  width="3" height="2"/>
+    <rect x="5" y="7"  width="4" height="2"/>
+    <rect x="4" y="9"  width="3" height="2"/>
+    <rect x="3" y="11" width="3" height="2"/>
+    <rect x="10" y="7" width="3" height="2"/>
+  </g>
+</svg>
