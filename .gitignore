@@ -1,4 +1,7 @@
+# Runtime and local scratch state
 state/
 *.log
 .env
 .tmp/
+.mymate-state/
+.mymate-bootstrap-test/

@@ -4,6 +4,28 @@ $directory = Join-Path $env:LOCALAPPDATA "mymate"
 New-Item -ItemType Directory -Force -Path $directory | Out-Null
 $inbox = Join-Path $directory "herdr-conductor-inbox.jsonl"
 $eventLog = Join-Path $directory "herdr-event-alerts.jsonl"
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+function Append-JsonLine {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][object]$Record
+    )
+    $json = $Record | ConvertTo-Json -Compress -Depth 8
+    $bytes = $utf8NoBom.GetBytes($json + [Environment]::NewLine)
+    $stream = [System.IO.File]::Open(
+        $Path,
+        [System.IO.FileMode]::Append,
+        [System.IO.FileAccess]::Write,
+        [System.IO.FileShare]::Read
+    )
+    try {
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush($true)
+    } finally {
+        $stream.Dispose()
+    }
+}
 
 $raw = $env:HERDR_PLUGIN_EVENT_JSON
 if ([string]::IsNullOrWhiteSpace($raw)) {
@@ -14,22 +36,32 @@ $event = $raw | ConvertFrom-Json
 $payload = if ($event.data) { $event.data } elseif ($event.payload) { $event.payload } else { $event }
 $paneId = [string]$payload.pane_id
 $state = [string]$payload.agent_status
+if ([string]::IsNullOrWhiteSpace($state)) {
+    $state = [string]$payload.state
+}
 if ([string]::IsNullOrWhiteSpace($paneId) -or [string]::IsNullOrWhiteSpace($state)) {
     throw "Status event did not include pane_id and agent_status. Raw event: $raw"
 }
 
+# The event remains useful even if the agent disappears between the event and
+# this lookup. A missing CLI/status response therefore does not discard it.
 $target = $paneId
-$statusLines = & mymate status --json 2>$null
+$statusLines = @()
+try {
+    $statusLines = @(& mymate status --json 2>$null)
+} catch {
+    $statusLines = @()
+}
 foreach ($line in $statusLines) {
     try {
-        $payload = $line | ConvertFrom-Json
+        $statusPayload = $line | ConvertFrom-Json
     } catch {
         continue
     }
-    if ($payload.result.type -ne "agent_list") {
+    if ($null -eq $statusPayload.result -or $statusPayload.result.type -ne "agent_list") {
         continue
     }
-    $agent = @($payload.result.agents | Where-Object { $_.pane_id -eq $paneId }) | Select-Object -First 1
+    $agent = @($statusPayload.result.agents | Where-Object { $_.pane_id -eq $paneId }) | Select-Object -First 1
     if ($null -ne $agent -and $agent.name) {
         $target = [string]$agent.name
     }
@@ -42,13 +74,13 @@ $alert = [ordered]@{
     state = $state
     previous_state = $null
     source = "herdr-event"
+    detection = "integration"
     action = if ($state -eq "blocked") { "read-and-relay" } else { "observe" }
     requires_conductor_action = ($state -eq "blocked")
 }
-$line = $alert | ConvertTo-Json -Compress
-$line | Add-Content -LiteralPath $eventLog
+Append-JsonLine -Path $eventLog -Record $alert
 if ($state -eq "blocked") {
-    $line | Add-Content -LiteralPath $inbox
+    Append-JsonLine -Path $inbox -Record $alert
 }
 
 $sound = if ($state -eq "blocked") { "request" } elseif ($state -in @("idle", "done")) { "done" } else { "none" }

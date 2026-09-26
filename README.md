@@ -1,95 +1,138 @@
-# mymate — a tiny conductor for agents in herdr
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/mymate-logo-dark.png">
+  <img src="assets/mymate-logo.png" width="358" height="120" alt="mymate">
+</picture>
 
-mymate is a small, self-contained conductor for a crew of coding agents that
-live in [herdr](https://herdr.dev) panes.
+# mymate
 
-You talk to one agent — the conductor — and it watches, dispatches, and leads
-the rest. There is no big runtime, no installed app: `mymate` is one bash
-command plus one skill file (`mymate.skill.md`) that you load into your primary
-agent. Everything else is plain shell over the herdr CLI.
+> **Reconcile draft:** this README merges the conductor-tooling documentation
+> with the published landing page and field-notes sections. The captain should
+> review this wording before it is treated as the canonical README.
 
-## What you get
+**Conductor for a crew of coding agents.** mymate observes the agents running in
+[herdr](https://herdr.dev) panes, keeps the captain informed, and hands work to
+the agent that best owns it — instead of one agent doing everything.
 
-- `mymate open [name] [--kind KIND]` — like firstmate's open-in-herdr: pop a
-  focused mymate conductor pane you can talk to directly, preloaded with the
-  conductor contract. Reuses the pane if the conductor is already open.
-- `mymate status` — observe the whole crew: every herdr workspace and every
-  agent, with live state (`idle`, `working`, `blocked`, `done`, `unknown`).
-- `mymate dispatch <name> <kind> "<brief>" [--skill FILE]` — open a sibling
-  pane, start a worker agent in it, hand it a skill and the brief, and report
-  when it settles.
-- `mymate watch` — keep an eye on the crew; it prints when an agent changes
-  state, turns `blocked`, or finishes.
-- `watch-herdr.ps1` — optional Windows bridge that polls state changes,
-  displays an immediate Herdr notification, and records transition alerts for
-  the conductor to read and relay.
-- `herdr-status-plugin\` — installed local Herdr event hook that receives
-  `pane.agent_status_changed` directly and forwards it to the conductor inbox.
-- `mymate talk <target> "<text>"` — steer one agent ("shipshape the login
-  test", "pause and report findings") through its native prompt surface.
-- `mymate read <target>`, `mymate keys <target> esc` — inspect or poke an
-  agent's terminal without attaching.
-- `mymate skills fetch` — download herdr's own current agent skill into
-  `skills/herdr.skill.md`; `mymate skills add <url>` pulls any skill.md to
-  base a worker on; `mymate skills new <name>` scaffolds a starter worker.
+## Start here
 
-## Layout
-
-- `bin/mymate` — the CLI (bash, works in Git Bash and any POSIX shell).
-- `bin/lib/herdr.sh` — thin herdr CLI wrappers (JSON in, IDs parsed from JSON).
-- `mymate.skill.md` — the conductor contract your primary agent loads.
-- `skills/herdr.skill.md` — herdr's own current agent skill (run `mymate skills fetch`).
-- `skills/starter.skill.md` — template for a worker agent's skill.
-
-## Setup
-
-Prerequisites: herdr installed and running, `jq` (optional but recommended),
-and your worker kinds available via `herdr agent` (opencode, codex, claude,
-and many more are supported by herdr itself).
-
-Make the CLI reachable and load the conductor skill:
+- Fresh-clone setup: [`INSTALL.md`](INSTALL.md)
+- Architecture, ordering rules, and mission list: [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md)
+- Published landing page: [`index.html`](index.html)
+- Field notes and briefs: [`briefs/`](briefs/), [`lessons/`](lessons/),
+  [`learning-records/`](learning-records/), and [`reference/`](reference/)
 
 ```sh
-git clone https://github.com/<you>/mymate && cd mymate   # or just use this folder
-chmod +x bin/mymate
-alias mymate="$PWD/bin/mymate"        # add to ~/.bashrc to make it permanent
+mymate install         # idempotent bootstrap; --force only for stale files
+mymate doctor          # check herdr, PATH, plugin, skill, and state directory
+mymate status          # crew board: workspaces, agents, and states
+mymate probe           # fast colour board: yellow=busy, red=blocked, green=ready
+mymate watch           # live watcher, notifies on colour changes
+mymate read <target>   # read one agent's recent output
+mymate dispatch <name> <kind> "<brief>"
+mymate talk <target> "<text>"
 ```
 
-Open herdr, start a pane, and in it run your primary agent with
-`mymate.skill.md` loaded (for opencode, run `opencode` in this folder; the
-conductor skill is at `mymate.skill.md`). The conductor takes over from there.
+## The conductor tooling
 
-## Safety posture
+- `mymate open [name] [--kind KIND]` — open a focused conductor pane with the
+  conductor contract loaded.
+- `mymate status` — observe every Herdr workspace and agent with live state.
+- `mymate dispatch <name> <kind> "<brief>" [--skill FILE]` — create a visible
+  crew pane, start a worker, hand it a skill and brief, and report settlement.
+- `mymate watch` — observe state transitions and settle on a requested state.
+- `mymate talk <target> "<text>"` — steer an agent through its native prompt.
+- `mymate read <target>` and `mymate key <target> <key>` — inspect or control a
+  terminal without attaching.
+- `mymate skills …` — list, fetch, add, or scaffold worker skills.
+- `herdr-status-plugin/` — the Windows native event hook for
+  `pane.agent_status_changed`.
+- `watch-herdr.ps1` — the Windows reconciliation and visible-prompt fallback.
 
-- `dispatch`, `talk`, and `keys` refuse to run outside a herdr pane
-  (`HERDR_ENV=1`); `status` and `read` are read-only and allowed anywhere.
-- `dispatch` always uses a sibling pane (`--no-focus`) and never touches a
-  pane, tab, or workspace the captain did not ask about.
-- IDs are parsed from herdr's JSON responses, never guessed from ordering.
-- Everything is one bash file you can read end to end.
+## What is in this repository
 
-### Immediate Windows signal bridge
+| path | what it is |
+| --- | --- |
+| `bin/` | the `mymate` CLI (`mymate`, `mymate.cmd`, `mymate.ps1`, `lib/`) |
+| `INSTALL.md` | manual fresh-clone setup and platform limitations |
+| `VERSION` | the CLI/plugin release version reported by `mymate --version` |
+| `templates/` | non-destructive seed template for a missing `conductor-policy.md` |
+| `herdr-status-plugin/` | native Herdr event bridge and state-file writer |
+| `conductor-policy.md` | standing crew, permission, and placement rules |
+| `mymate.skill.md` | the conductor contract loaded by the primary agent |
+| `skills/` | worker skills handed to crew agents at dispatch |
+| `docs/IMPLEMENTATION.md` | architecture, orderings, mission list, and known limits |
+| `watch-herdr.ps1` | reconciliation / visible-prompt fallback watcher |
+| `herdr-server-failsafe.ps1` | restarts a dead Herdr server |
+| `backup-herdr-session.ps1` | snapshots `session.json` before risky operations |
+| `recreate-lost-tabs.ps1` | rebuilds a lost Herdr layout |
+| `index.html`, `style.css`, `script.js`, `assets/site.css` | the published landing page and its stylesheet |
+| `briefs/`, `lessons/`, `learning-records/`, `reference/` | field notes, briefs, and reference material |
+| `MISSION.md`, `NOTES.md`, `RESOURCES.md`, `LICENSE` | project background and licensing |
 
-From a Herdr-managed PowerShell pane, run:
+`skills/herdr.skill.md` is retained from the published tooling lineage and can
+be refreshed from the installed Herdr binary with `mymate skills fetch`.
 
-```powershell
-.\watch-herdr.ps1
+## State files
+
+Runtime state is written outside Git:
+
+- Windows: `%LOCALAPPDATA%\mymate\`
+- macOS/Linux: `<repo>/.mymate-state/`
+
+| file | contents |
+| --- | --- |
+| `herdr-state.json` | live snapshot of every agent and its state |
+| `herdr-blockers.json` | agents currently blocked on a decision |
+| `herdr-event-alerts.jsonl` | append-only native event stream |
+| `herdr-conductor-inbox.jsonl` | items the conductor must read and relay |
+| `herdr-auto-approvals.jsonl` | permission prompts the conductor granted |
+
+## Setup and safety
+
+Read [`INSTALL.md`](INSTALL.md) for the complete Windows/macOS/Linux path.
+`mymate install` never edits your `PATH` or overwrites an existing conductor
+skill or policy without explicit `--force` where applicable.
+
+Mutating commands (`dispatch`, `talk`, `key`) require `HERDR_ENV=1`; read-only
+`status`, `probe`, and `read` do not. IDs come from Herdr JSON responses, never
+from tab order.
+
+Every crew pane must end in a labelled, visible Herdr tab. The safe startup
+sequence is:
+
+```sh
+herdr pane split --current --direction right --cwd "$PWD" --no-focus
+herdr agent start <name> --kind <kind> --pane <pane-id>
+herdr pane move <pane-id> --new-tab --label "<label>" --tab-label "<label>" --no-focus
 ```
 
-The installed event plugin receives native `pane.agent_status_changed` events
-without polling and writes `herdr-event-alerts.jsonl`. It shows a request
-notification for `blocked` and appends high-priority entries to the conductor
-inbox. `watch-herdr.ps1` remains a reconciliation fallback: it polls
-`mymate status --json`, maintains `herdr-state.json` and `herdr-blockers.json`,
-and checks visible panes only for prompts that native lifecycle state misses.
-Every blocked transition is also appended to
-`herdr-conductor-inbox.jsonl`, a durable high-priority queue that the conductor
-must read and relay before routing other work.
-The watcher also writes effective states to
-`%USERPROFILE%\.mymate\effective-colors.state`; `mymate probe`, `check`, and
-`watch` use this override so visible permission prompts are shown as red even
-when an integration incorrectly reports yellow/working.
-It never answers permission prompts or sends agent input automatically; the
-conductor must read the target and relay the captain's decision.
+Never use a CLI window, a background shell, or a hidden `herdr --session` for a
+crew member. See [`conductor-policy.md`](conductor-policy.md) for the full
+placement and permission boundary.
 
-MIT — see LICENSE.
+## Windows signal bridge
+
+The native plugin is Windows-only. It receives `pane.agent_status_changed`
+events and writes the event stream and conductor inbox without requiring a
+client attachment. `watch-herdr.ps1` is the reconciliation fallback: it polls
+`mymate status --json`, maintains state/blocker snapshots, and detects visible
+permission prompts that native lifecycle state misses. It is observe-only and
+never approves prompts or sends agent input.
+
+On macOS and Linux the CLI remains usable, but this Windows JSONL event bridge
+is not installed; use the CLI boards or a compatible polling fallback.
+
+## Published material
+
+The landing page remains at [`index.html`](index.html). The surrounding
+material is intentionally preserved from the published lineage:
+
+- [`briefs/`](briefs/) — task and project briefs
+- [`lessons/`](lessons/) — recorded lessons
+- [`learning-records/`](learning-records/) — learning-record entries
+- [`reference/`](reference/) — reference notes
+- [`MISSION.md`](MISSION.md), [`NOTES.md`](NOTES.md), [`RESOURCES.md`](RESOURCES.md)
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).

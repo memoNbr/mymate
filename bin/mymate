@@ -5,8 +5,16 @@ set -euo pipefail
 
 MM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$MM_ROOT/bin/lib/herdr.sh"
+. "$MM_ROOT/bin/lib/install.sh"
 
-VERSION="0.1.0"
+VERSION_FILE="$MM_ROOT/VERSION"
+if [ -f "$VERSION_FILE" ]; then
+  VERSION="$(tr -d '\r\n' < "$VERSION_FILE")"
+else
+  VERSION="0.2.0"
+fi
+[ -n "$VERSION" ] || VERSION="0.2.0"
+PLUGIN_VERSION="$(mm_manifest_field version "$MM_ROOT/herdr-status-plugin/herdr-plugin.toml" 2>/dev/null || printf 'unknown')"
 
 usage() {
   cat <<'EOF'
@@ -43,8 +51,12 @@ Skills:
   skills add <url>                Download any skill.md to base workers on
   skills new <name>               Scaffold a starter worker skill
 
+Bootstrap:
+  install [--force] [--dry-run]   Idempotent bootstrap; never edits PATH silently
+  doctor                          Check herdr, PATH, plugin, skill, and state dir
+
   help | --help | -h              This message
-  --version                       Version
+  --version                       Name, version, and plugin version
 EOF
 }
 
@@ -69,6 +81,13 @@ cmd_open() {
   echo "  pane: $pane_id"
 
   mm_agent_start "$name" --kind "$kind" --pane "$pane_id" || die "worker start failed (is kind '$kind' available?)"
+
+  local tab_pane
+  if tab_pane="$(mm_dispatch_tab "$pane_id" "Mymate Conductor" --focus)"; then
+    pane_id="$tab_pane"
+  else
+    printf '%s\n' "warning: conductor is running, but could not move it to its own labelled tab" >&2
+  fi
 
   local text contract
   contract="$(cat "$MM_ROOT/mymate.skill.md")"
@@ -103,14 +122,14 @@ echo
 # cmd_probe : fastest possible "what is going on" - one herdr call, colour-coded
 # board mirroring the herdr TUI: yellow=busy/working, red=blocked (e.g. waiting
 # on a permission prompt), green=idle/done/ready. Shows time-in-state since the
-# previous probe, tracked in ~/.mymate/probe.state.
+# previous probe, tracked in %LOCALAPPDATA%\mymate/probe.state.
 cmd_probe() {
   mm_require_herdr
   local now json
   now="$(date +%s)"
   json="$(mm_agents_json)"
 
-  local dir="$HOME/.mymate"
+  local dir="$MM_DATA_DIR"
   mkdir -p "$dir"
   local cache="$dir/probe.state" cache_tmp="$dir/probe.state.tmp"
   [ -f "$cache" ] || : > "$cache"
@@ -126,7 +145,7 @@ cmd_probe() {
   echo "=== probe $(date +%H:%M:%S) ==="
 
   local n s pid cwd foc color age base prev about
-  local effective="${USERPROFILE:-$HOME}/.mymate/effective-colors.state"
+  local effective="$MM_DATA_DIR/effective-colors.state"
   local -A effective_states=()
   if [ -f "$effective" ]; then
     while IFS=$'\t' read -r ename estate; do
@@ -177,7 +196,7 @@ mm_colorof() {
 
 # mm_color_snapshot : name TAB state lines for every agent, sorted by name.
 mm_color_snapshot() {
-  local effective="${USERPROFILE:-$HOME}/.mymate/effective-colors.state"
+  local effective="$MM_DATA_DIR/effective-colors.state"
   declare -A effective_states=()
   if [ -f "$effective" ]; then
     while IFS=$'\t' read -r ename estate; do
@@ -192,13 +211,13 @@ mm_color_snapshot() {
 }
 
 # cmd_check : one-shot diff against the last known colors
-# (~/.mymate/colors.state). Prints rows whose color CHANGED since the state
+# (%LOCALAPPDATA%\mymate/colors.state). Prints rows whose color CHANGED since the state
 # was recorded, then records the new colors. This is the conductor's
 # "wake-up" move: run it the moment the captain pings to surface anything
 # that finished or went red meanwhile.
 cmd_check() {
   mm_require_herdr
-  local dir="$HOME/.mymate"
+  local dir="$MM_DATA_DIR"
   mkdir -p "$dir"
   local state="$dir/colors.state" tmp="$dir/colors.state.tmp"
   [ -f "$state" ] || : > "$state"
@@ -243,7 +262,7 @@ cmd_watch() {
   [ "$interval" -ge 1 ] 2>/dev/null || interval=5
   echo "watching colors every ${interval}s (yellow=busy red=blocked green=idle/done); Ctrl-C to stop"
 
-  local dir="$HOME/.mymate"
+  local dir="$MM_DATA_DIR"
   mkdir -p "$dir"
   local state="$dir/colors.state"
   : > "$state"
@@ -313,6 +332,12 @@ cmd_dispatch() {
 
   echo "starting worker '$name' (kind: $kind)..."
   mm_agent_start "$name" --kind "$kind" --pane "$pane_id" "$@"
+  local tab_pane
+  if tab_pane="$(mm_dispatch_tab "$pane_id" "$name" --no-focus)"; then
+    pane_id="$tab_pane"
+  else
+    printf '%s\n' "warning: worker is running, but could not move it to its own labelled tab" >&2
+  fi
   echo "  ready: $name @ $pane_id"
 
   local prompt_text="$brief"
@@ -431,9 +456,13 @@ case "$cmd" in
   dispatch) shift; cmd_dispatch "$@" ;;
   talk)   shift; cmd_talk "$@" ;;
   key)    shift; cmd_key "$@" ;;
-  watch)  shift; cmd_watch "$@" ;;
+  install) shift; cmd_install "$@" ;;
+  doctor)  shift; cmd_doctor "$@" ;;
   skills) shift; cmd_skills "$@" ;;
   help|--help|-h) usage ;;
-  --version) echo "mymate $VERSION" ;;
+  --version)
+    printf 'mymate %s\n' "$VERSION"
+    printf 'mymate.herdr-status %s\n' "$PLUGIN_VERSION"
+    ;;
   *) usage; exit 1 ;;
 esac

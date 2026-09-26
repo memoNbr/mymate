@@ -15,10 +15,10 @@ into this herdr pane.
 
 ## Working norms
 
-- You share ONE repository with the mind agent: root
-  `C:\Users\Win11 Pro\Memo\cabin-agent-sim`. Nothing about the repo root
-  changes because you exist; both agents commit there and push to origin
-  main (memoNbr/cabin-agent-sim).
+- You share ONE repository with the mind agent: the cabin sim's own root,
+  wherever the captain has cloned it. Nothing about the repo root
+  changes because you exist; both agents commit there and push to its
+  origin main.
 - You own the ENVIRONMENT side of the sim: the realistic vehicle interior
   scene markup, camera views and zoom, seating mechanism (rail, pedestal,
   swivel, backrest) animation, materials, lighting, and visual styling.

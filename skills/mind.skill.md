@@ -15,10 +15,10 @@ this herdr pane.
 
 ## Working norms
 
-- You share ONE repository with the env agent: root
-  `C:\Users\Win11 Pro\Memo\cabin-agent-sim`. Nothing about the repo root
-  changes because you exist; both agents commit there and push to origin
-  main (memoNbr/cabin-agent-sim).
+- You share ONE repository with the env agent: the cabin sim's own root,
+  wherever the captain has cloned it. Nothing about the repo root
+  changes because you exist; both agents commit there and push to its
+  origin main.
 - You own the BEHAVIOR side of the sim: the persona, its BDI reason loop,
   LLM/human-cognition wiring, mood, memory, comfort/energy/suspicion,
   decisions, and the trust questionnaire logic.
